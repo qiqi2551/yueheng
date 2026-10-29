@@ -1,5 +1,11 @@
 /* 月衡 · 计算核心
  * 纯函数，不依赖 DOM，可单独用 Node 测试。
+ *
+ * 口径说明：
+ *   平均每日 = 月限额 ÷ 当月天数                    —— 平摊基准
+ *   今日额度 = (月限额 − 今天之前的支出) ÷ 剩余天数   —— 今天的配额，不受今天消费影响
+ *   今天还能花 = 今日额度 − 今天已花                 —— 可为负（超支）
+ *   明日额度 = (月限额 − 累计已花) ÷ 今天之后的天数    —— 明天重新摊一次
  */
 (function (global) {
   'use strict';
@@ -10,6 +16,7 @@
     if (observedSpan <= 7) return 1;
     return 0;
   }
+
   /** 预测区间的上下浮动，按日均标准差的这个倍数展开 */
   var SPREAD_FACTOR = 0.5;
 
@@ -39,7 +46,32 @@
   function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
 
   /**
-   * 汇总某个月的花销并给出预测。
+   * 本月要承接的上月欠款（负数；0 表示不结转）。
+   * 只结转欠款：某月结束时若还有结余，额度清零，不往后累积。
+   * 向前回溯最多 24 个月；遇到完全没有记录的月份就停下（视为没有欠款）。
+   * 历史月份统一按当前限额估算。
+   */
+  function carryInFor(txns, limit, year, month) {
+    var spentList = [];
+    var y = year, m = month;
+    for (var i = 0; i < 24; i++) {
+      var prev = shiftMonth(y, m, -1);
+      y = prev.year; m = prev.month;
+      var spent = monthTotal(txns, monthKeyOf(y, m));
+      if (spent === 0) break;
+      spentList.push(spent);
+    }
+    var carry = 0;
+    // 从最早的一个月开始往后滚
+    for (var j = spentList.length - 1; j >= 0; j--) {
+      var end = limit + carry - spentList[j];
+      carry = end < 0 ? end : 0;
+    }
+    return round2(carry);
+  }
+
+  /**
+   * 汇总某个月的花销、额度与预测。
    * @param {{txns:Array, limit:number, windowDays:(number|'month'), now:(Date|string|number)}} input
    */
   function summarize(input) {
@@ -60,6 +92,7 @@
     var spent = 0;
     var todaySpent = 0;
     var monthTxns = [];
+    var catMap = {};
     var todayStr = keyOf(now);
 
     for (var j = 0; j < txns.length; j++) {
@@ -73,12 +106,46 @@
       daily[day] += amt;
       spent += amt;
       if (t.date === todayStr) todaySpent += amt;
+      var ck = t.category || 'other';
+      catMap[ck] = (catMap[ck] || 0) + amt;
     }
     spent = round2(spent);
     todaySpent = round2(todaySpent);
 
-    // 没有限额时，用已花金额推一个基准，仅用于图表与预测，不影响建议值
-    var baseline = limit > 0 ? limit / D : (today > 0 ? spent / today : 0);
+    var spentBeforeToday = round2(spent - todaySpent);
+    var daysLeft = D - today + 1;
+    var afterToday = D - today;
+
+    // ---- 结转：上个月结束时如果还欠着，就扣到这个月 ----
+    // 只结转欠款（负数），结余不外推，避免额度越滚越大
+    var carryIn = 0;
+    if (limit > 0 && input.carryOver !== false) {
+      carryIn = carryInFor(txns, limit, year, month);
+    }
+    var budget = round2(limit + carryIn);
+    if (budget < 0) budget = 0;
+
+    // ---- 额度 ----
+    var basePerDay = budget > 0 ? round2(budget / D) : 0;
+    var allowanceToday = null;
+    var todayLeft = null;
+    var allowanceTomorrow = null;
+    var allowanceDelta = null;
+
+    if (limit > 0) {
+      allowanceToday = round2(Math.max(0, budget - spentBeforeToday) / daysLeft);
+      todayLeft = round2(allowanceToday - todaySpent);
+      if (afterToday > 0) {
+        allowanceTomorrow = round2(Math.max(0, budget - spent) / afterToday);
+        allowanceDelta = round2(allowanceTomorrow - allowanceToday);
+      }
+    }
+
+    var remaining = round2(budget - spent);
+
+    // ---- 预测 ----
+    // 没有限额时用已花金额推一个基准，仅用于预测与图表，不影响额度
+    var baseline = budget > 0 ? budget / D : (today > 0 ? spent / today : 0);
 
     // 从第一笔记录算起才是「观测期」：前面的空白不代表那几天没花钱
     var firstDay = today;
@@ -113,36 +180,40 @@
     variance = windowDays > 1 ? variance / (windowDays - 1) : 0;
     var sd = Math.sqrt(variance);
 
-    var afterToday = D - today;
     var forecast = round2(spent + mu * afterToday);
     var forecastLow = round2(spent + Math.max(0, mu - SPREAD_FACTOR * sd) * afterToday);
     var forecastHigh = round2(spent + (mu + SPREAD_FACTOR * sd) * afterToday);
 
-    // 今日建议：剩余额度平分到「今天起剩下的每一天」
-    var daysLeft = D - today + 1;
-    var remaining = round2(limit - spent);
-    var perDay = limit > 0 ? round2(remaining / daysLeft) : null;
-    var suggestedToday = perDay === null ? null : Math.max(0, perDay);
-    var todayRemaining = perDay === null ? null : round2(perDay - todaySpent);
-
-    // 节奏对比：到今天为止「计划应该花掉多少」
-    var planSpent = round2(limit * (today - 1) / D);
+    // 节奏对比：到今天为止「按有效预算平摊应该花掉多少」
+    var planSpent = round2(budget * today / D);
     var paceGap = round2(spent - planSpent);
 
     var status = 'none';
     if (limit > 0) {
-      if (forecast > limit * 1.001) status = 'over';
-      else if (forecast > limit * 0.9) status = 'tight';
+      if (forecast > budget * 1.001) status = 'over';
+      else if (forecast > budget * 0.9) status = 'tight';
       else status = 'safe';
     }
 
-    var progress = limit > 0 ? clamp(spent / limit, 0, 1) : 0;
+    var progress = budget > 0 ? clamp(spent / budget, 0, 1) : 0;
+
+    // 分类合计
+    var categories = [];
+    for (var cid in catMap) {
+      if (Object.prototype.hasOwnProperty.call(catMap, cid)) {
+        categories.push({ id: cid, amount: round2(catMap[cid]) });
+      }
+    }
+    categories.sort(function (a, b) { return b.amount - a.amount; });
+    for (var ci = 0; ci < categories.length; ci++) {
+      categories[ci].share = spent > 0 ? categories[ci].amount / spent : 0;
+    }
 
     // 图表数据：1..D，今天之前是实际值，之后是预测值
     var series = [];
     var cum = 0;
     for (var day2 = 1; day2 <= D; day2++) {
-      var point = { day: day2, ideal: round2(limit * day2 / D) };
+      var point = { day: day2, ideal: round2(budget * day2 / D) };
       if (day2 <= today) {
         cum += daily[day2];
         point.actual = round2(cum);
@@ -165,18 +236,22 @@
       afterToday: afterToday,
       limit: limit,
       hasLimit: limit > 0,
+      carryIn: carryIn,
+      budget: budget,
       spent: spent,
-      remaining: remaining,
+      spentBeforeToday: spentBeforeToday,
       todaySpent: todaySpent,
-      perDay: perDay,
-      suggestedToday: suggestedToday,
-      todayRemaining: todayRemaining,
+      remaining: remaining,
+      basePerDay: basePerDay,
+      allowanceToday: allowanceToday,
+      todayLeft: todayLeft,
+      allowanceTomorrow: allowanceTomorrow,
+      allowanceDelta: allowanceDelta,
       dailyMean: round2(mu),
       observedDays: windowDays,
       observedSpan: observedSpan,
       firstDay: firstDay,
       hasData: hasData,
-      observedSd: round2(sd),
       forecast: forecast,
       forecastLow: forecastLow,
       forecastHigh: forecastHigh,
@@ -185,6 +260,7 @@
       paceGap: paceGap,
       status: status,
       progress: progress,
+      categories: categories,
       series: series,
       daily: daily,
       monthTxns: monthTxns

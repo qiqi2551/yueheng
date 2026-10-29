@@ -8,13 +8,13 @@
   var VERSION = 1;
 
   var CATEGORIES = [
-    { id: 'food',      name: '餐饮', icon: '🍜' },
-    { id: 'transport', name: '交通', icon: '🚇' },
-    { id: 'shopping',  name: '购物', icon: '🛍️' },
-    { id: 'fun',       name: '娱乐', icon: '🎮' },
-    { id: 'home',      name: '居家', icon: '🏠' },
-    { id: 'health',    name: '医疗', icon: '💊' },
-    { id: 'other',     name: '其他', icon: '📦' }
+    { id: 'food',      name: '餐饮', short: '餐' },
+    { id: 'transport', name: '交通', short: '交' },
+    { id: 'shopping',  name: '购物', short: '购' },
+    { id: 'fun',       name: '娱乐', short: '娱' },
+    { id: 'home',      name: '居家', short: '家' },
+    { id: 'health',    name: '医疗', short: '医' },
+    { id: 'other',     name: '其他', short: '其' }
   ];
 
   function catOf(id) {
@@ -23,7 +23,7 @@
   }
 
   function defaults() {
-    return { version: VERSION, limit: 0, windowDays: 14, txns: [] };
+    return { version: VERSION, limit: 0, windowDays: 14, carryOver: true, txns: [] };
   }
 
   function uid() {
@@ -53,6 +53,7 @@
     base.limit = isFinite(limit) && limit >= 0 ? Math.round(limit * 100) / 100 : base.limit;
     var w = raw.windowDays;
     base.windowDays = (w === 'month' || [7, 14, 30].indexOf(Number(w)) >= 0) ? (w === 'month' ? 'month' : Number(w)) : base.windowDays;
+    if (typeof raw.carryOver === 'boolean') base.carryOver = raw.carryOver;
     var list = Array.isArray(raw.txns) ? raw.txns : [];
     var seen = {};
     for (var i = 0; i < list.length; i++) {
@@ -75,7 +76,8 @@
   function save(state) {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        version: VERSION, limit: state.limit, windowDays: state.windowDays, txns: state.txns
+        version: VERSION, limit: state.limit, windowDays: state.windowDays,
+        carryOver: state.carryOver !== false, txns: state.txns
       }));
       return true;
     } catch (e) {
@@ -110,6 +112,7 @@
       exportedAt: new Date().toISOString(),
       limit: state.limit,
       windowDays: state.windowDays,
+      carryOver: state.carryOver !== false,
       txns: state.txns
     }, null, 2);
   }
@@ -137,6 +140,7 @@
     if (raw.windowDays === 'month' || [7, 14, 30].indexOf(Number(raw.windowDays)) >= 0) {
       state.windowDays = raw.windowDays === 'month' ? 'month' : Number(raw.windowDays);
     }
+    if (typeof raw.carryOver === 'boolean') state.carryOver = raw.carryOver;
     return { added: added, merged: merged };
   }
 
@@ -174,7 +178,7 @@
         });
       }
     }
-    return { version: VERSION, limit: 3000, windowDays: 14, txns: txns };
+    return { version: VERSION, limit: 3000, windowDays: 14, carryOver: true, txns: txns };
   }
 
   global.Store = {

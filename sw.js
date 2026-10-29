@@ -1,5 +1,5 @@
 /* 月衡 · 离线缓存 */
-var CACHE = 'yueheng-v1';
+var CACHE = 'yueheng-v2';
 var ASSETS = [
   './',
   './index.html',

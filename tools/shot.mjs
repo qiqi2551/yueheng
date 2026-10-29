@@ -122,6 +122,9 @@ async function main() {
         screenWidth: w,
         screenHeight: h
       });
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: s.scheme === 'dark' ? 'dark' : 'light' }]
+      });
 
       const loaded = cdp.once('Page.loadEventFired');
       await cdp.send('Page.navigate', { url: s.url });

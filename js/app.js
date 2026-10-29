@@ -59,10 +59,10 @@
     return (neg ? '-' : '') + out;
   }
 
-  function heroParts(n) {
+  function moneyParts(n) {
     var v = Math.abs(Math.round((Number(n) || 0) * 100) / 100);
     var parts = v.toFixed(2).split('.');
-    return { int: group3(parts[0]), cents: parts[1] === '00' ? '' : parts[1] };
+    return { int: group3(parts[0]), cents: parts[1] };
   }
 
   function dayLabel(dateStr) {
@@ -134,7 +134,7 @@
     for (var i = 0; i < S.CATEGORIES.length; i++) {
       var c = S.CATEGORIES[i];
       html += '<button class="cat' + (c.id === entry.category ? ' is-on' : '') + '" type="button" data-cat="' + c.id + '">' +
-        '<span class="ci">' + c.icon + '</span><span>' + c.name + '</span></button>';
+        '<span class="cat-dot" data-c="' + c.id + '">' + c.short + '</span><span>' + c.name + '</span></button>';
     }
     el.catRow.innerHTML = html;
   }
@@ -207,7 +207,7 @@
     var c = S.catOf(t.category);
     showModal({
       title: '删除这笔记录？',
-      body: esc(c.icon + ' ' + (t.note || c.name)) + '<br>¥' + money(t.amount),
+      body: esc(c.name + (t.note ? ' · ' + t.note : '')) + '<br>¥' + money(t.amount),
       okText: '删除',
       danger: true,
       onOk: function () {
@@ -219,10 +219,34 @@
     });
   }
 
-  /* ---------------- 视图：概览 ---------------- */
+  /* ---------------- 通用小组件 ---------------- */
+
+  function icon(catId, cls) {
+    var c = S.catOf(catId);
+    return '<span class="' + (cls || 'ico') + '" data-c="' + c.id + '">' + c.short + '</span>';
+  }
+
+  function txnRow(t, withDel) {
+    var c = S.catOf(t.category);
+    var title = t.note || c.name;
+    var sub = t.note ? c.name : '';
+    return '<div class="txn">' +
+      icon(t.category) +
+      '<div class="txn-main">' +
+        '<div class="txn-name">' + esc(title) + '</div>' +
+        (sub ? '<div class="txn-note">' + esc(sub) + '</div>' : '') +
+      '</div>' +
+      '<div class="txn-amt">' + money(t.amount) + '</div>' +
+      (withDel ? '<button class="txn-del" type="button" data-action="del-txn" data-id="' + esc(t.id) + '" aria-label="删除">' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+      '</button>' : '') +
+    '</div>';
+  }
+
+  /* ---------------- 图表 ---------------- */
 
   function chartSVG(s) {
-    var W = 320, H = 128, padL = 4, padR = 4, padT = 8, padB = 16;
+    var W = 320, H = 132, padL = 4, padR = 4, padT = 10, padB = 18;
     var iw = W - padL - padR, ih = H - padT - padB;
     var D = s.daysInMonth;
     var maxV = Math.max(s.limit || 0, s.forecastHigh || 0, s.spent || 0, 1) * 1.08;
@@ -239,7 +263,6 @@
     var actual = [], proj = [], ideal = [];
     for (var i = 0; i < s.series.length; i++) {
       var p = s.series[i];
-      // 从第一笔记录那天画起，避免把「还没开始记」误画成「没花钱」
       if (p.actual != null && p.day >= s.firstDay) actual.push([X(p.day), Y(p.actual)]);
       if (p.projected != null) proj.push([X(p.day), Y(p.projected)]);
       ideal.push([X(p.day), Y(p.ideal)]);
@@ -247,161 +270,170 @@
 
     var area = '';
     if (actual.length > 1) {
-      area = '<path d="' + path(actual) +
+      area = '<path class="chart-area" d="' + path(actual) +
         'L' + actual[actual.length - 1][0].toFixed(1) + ' ' + (padT + ih) +
-        'L' + actual[0][0].toFixed(1) + ' ' + (padT + ih) + 'Z" fill="url(#gArea)"/>';
+        'L' + actual[0][0].toFixed(1) + ' ' + (padT + ih) + 'Z"/>';
     }
 
     var limitLine = '';
     if (s.limit > 0 && s.limit <= maxV) {
       var yl = Y(s.limit).toFixed(1);
-      limitLine = '<line x1="' + padL + '" y1="' + yl + '" x2="' + (W - padR) + '" y2="' + yl +
-        '" stroke="#E5484D" stroke-width="1" stroke-dasharray="1 4" stroke-linecap="round" opacity=".6"/>';
+      limitLine = '<line class="chart-limit" x1="' + padL + '" y1="' + yl + '" x2="' + (W - padR) + '" y2="' + yl + '"/>';
     }
 
     var dot = '';
     if (s.hasData) {
-      dot = '<circle cx="' + X(s.today).toFixed(1) + '" cy="' + Y(s.spent).toFixed(1) +
-        '" r="3.6" fill="#fff" stroke="#4C6FFF" stroke-width="2.2"/>';
+      dot = '<circle class="chart-dot" cx="' + X(s.today).toFixed(1) + '" cy="' + Y(s.spent).toFixed(1) + '" r="3.5"/>';
     }
 
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="本月累计支出与预测曲线">' +
-      '<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0" stop-color="#4C6FFF" stop-opacity=".15"/>' +
-        '<stop offset="1" stop-color="#4C6FFF" stop-opacity="0"/>' +
-      '</linearGradient></defs>' +
-      '<line x1="' + padL + '" y1="' + (padT + ih) + '" x2="' + (W - padR) + '" y2="' + (padT + ih) + '" stroke="#EDF0F4" stroke-width="1"/>' +
-      (s.limit > 0 ? '<path d="' + path(ideal) + '" fill="none" stroke="#DCE2EC" stroke-width="1.2" stroke-dasharray="3 4"/>' : '') +
-      limitLine +
-      area +
-      '<path d="' + path(actual) + '" fill="none" stroke="#4C6FFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
-      '<path d="' + path(proj) + '" fill="none" stroke="#4C6FFF" stroke-width="1.8" stroke-dasharray="4 3" opacity=".45" stroke-linecap="round"/>' +
+      '<line class="chart-axis-line" x1="' + padL + '" y1="' + (padT + ih) + '" x2="' + (W - padR) + '" y2="' + (padT + ih) + '"/>' +
+      (s.limit > 0 ? '<path class="chart-ideal" d="' + path(ideal) + '"/>' : '') +
+      limitLine + area +
+      '<path class="chart-line" d="' + path(actual) + '"/>' +
+      '<path class="chart-proj" d="' + path(proj) + '"/>' +
       dot +
-      '<text x="' + padL + '" y="' + (H - 1) + '" font-size="9.5" fill="#AEB5C1">1日</text>' +
-      '<text x="' + (W - padR) + '" y="' + (H - 1) + '" font-size="9.5" fill="#AEB5C1" text-anchor="end">' + D + '日</text>' +
+      '<text class="chart-tick" x="' + padL + '" y="' + (H - 2) + '">1日</text>' +
+      '<text class="chart-tick" x="' + (W - padR) + '" y="' + (H - 2) + '" text-anchor="end">' + D + '日</text>' +
     '</svg>';
   }
 
-  function txnRow(t, withDel) {
-    var c = S.catOf(t.category);
-    var title = t.note || c.name;
-    var sub = t.note ? c.name : '';
-    return '<div class="txn">' +
-      '<div class="txn-ico">' + c.icon + '</div>' +
-      '<div class="txn-main">' +
-        '<div class="txn-name">' + esc(title) + '</div>' +
-        (sub ? '<div class="txn-note">' + esc(sub) + '</div>' : '') +
-      '</div>' +
-      '<div class="txn-amt">' + money(t.amount) + '</div>' +
-      (withDel ? '<button class="txn-del" type="button" data-action="del-txn" data-id="' + esc(t.id) + '" aria-label="删除">' +
-        '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
-      '</button>' : '') +
-    '</div>';
-  }
+  /* ---------------- 视图：概览 ---------------- */
 
   function viewOverview() {
-    var s = F.summarize({ txns: state.txns, limit: state.limit, windowDays: state.windowDays });
+    var s = F.summarize({
+      txns: state.txns, limit: state.limit, windowDays: state.windowDays,
+      carryOver: state.carryOver !== false
+    });
     var has = s.hasLimit;
 
-    var chip;
-    if (!has) chip = '<span class="status-chip is-none">未设限额</span>';
-    else if (!s.hasData) chip = '<span class="status-chip is-none">待记录</span>';
-    else if (s.perDay < 0) chip = '<span class="status-chip is-over">已超支 ¥' + money(Math.abs(s.remaining)) + '</span>';
-    else if (s.status === 'over') chip = '<span class="status-chip is-over">预计超支 ¥' + money(s.forecastGap) + '</span>';
-    else if (s.status === 'tight') chip = '<span class="status-chip is-tight">预计刚好用完</span>';
-    else chip = '<span class="status-chip is-safe">预计结余 ¥' + money(-s.forecastGap) + '</span>';
+    // ---------- 今日额度 ----------
+    var label, value, tag, tagCls, meta, notice = '';
 
-    var label, val, sub;
     if (!has) {
       label = '本月已花';
-      val = s.spent;
-      sub = '填一个月限额，就能算出每天能花多少';
-    } else if (s.perDay < 0) {
-      label = '已经超出';
-      val = Math.abs(s.remaining);
-      sub = '本月还剩 ' + s.daysLeft + ' 天 · 建议从今天起收紧，或调高限额';
+      value = s.spent;
+      tag = '未设限额'; tagCls = 'is-mute';
+      meta = '填一个月限额，就能算出每天能花多少';
     } else {
-      label = '今日建议支出';
-      val = s.perDay;
-      sub = '今日已花 ¥' + money(s.todaySpent) + ' · 本月还剩 ' + s.daysLeft + ' 天';
+      var over = s.todayLeft < 0;
+      label = over ? '今天已超出' : '今天还能花';
+      value = Math.abs(s.todayLeft);
+      tag = over ? '超支' : (s.todayLeft === 0 ? '刚好用完' : '预算内');
+      tagCls = over ? 'is-bad' : (s.todayLeft === 0 ? 'is-warn' : 'is-ok');
+      meta = '今日额度 ¥' + money(s.allowanceToday) + ' · 已花 ¥' + money(s.todaySpent);
+
+      if (s.afterToday === 0) {
+        notice = over
+          ? '今天是本月最后一天，已超出 ¥' + money(-s.todayLeft)
+          : '今天是本月最后一天，还剩 ¥' + money(s.todayLeft) + ' 没用完';
+      } else if (s.allowanceDelta > 0.004) {
+        notice = '今天比额度少花 ¥' + money(s.todayLeft) + '，明天额度上调到 ¥' + money(s.allowanceTomorrow);
+      } else if (s.allowanceDelta < -0.004) {
+        notice = '今天超出额度 ¥' + money(-s.todayLeft) + '，明天额度下调到 ¥' + money(s.allowanceTomorrow);
+      } else {
+        notice = '今天正好花完额度，明天额度保持 ¥' + money(s.allowanceTomorrow);
+      }
     }
 
-    var hp = heroParts(val);
-    var meter = '';
-    if (has) {
-      meter =
-        '<div class="hero-meter' + (s.progress >= 1 ? ' is-over' : '') + '"><i style="width:' + (s.progress * 100).toFixed(1) + '%"></i></div>' +
-        '<div class="hero-legend"><span>已花 ¥' + money(s.spent) + '</span><span>限额 ¥' + money(s.limit) + '</span></div>';
-    }
+    var hp = moneyParts(value);
+    var grid = has
+      ? '<div class="pgrid">' +
+          '<div class="pg"><span>平均每日</span><b>¥' + money(s.basePerDay) + '</b></div>' +
+          '<div class="pg"><span>今日额度</span><b>¥' + money(s.allowanceToday) + '</b></div>' +
+          '<div class="pg"><span>明日额度</span><b>' + (s.allowanceTomorrow === null ? '—' : '¥' + money(s.allowanceTomorrow)) + '</b></div>' +
+        '</div>'
+      : '<div class="pgrid"><div class="pg"><span>记录</span><b>' + s.monthTxns.length + ' 笔</b></div>' +
+        '<div class="pg"><span>剩余天数</span><b>' + s.daysLeft + ' 天</b></div></div>';
 
-    var cta = has ? '' : '<button class="hero-cta" type="button" data-action="go-settings">设置月限额 →</button>';
+    var cta = has ? '' : '<button class="primary-cta" type="button" data-action="go-settings">设置月限额</button>';
 
-    var emptyHint = (has && !s.hasData)
-      ? '<div class="hero-empty">今天先记一笔，预测和每日建议就会自动跟上。</div>' : '';
-
-    var hero =
-      '<section class="hero">' +
-        '<div class="hero-top"><span class="hero-label">' + label + '</span>' + chip + '</div>' +
-        '<div class="hero-amount"><span class="hero-cur">¥</span><span class="hero-val">' + hp.int + '</span>' +
-          (hp.cents ? '<span class="hero-cents">.' + hp.cents + '</span>' : '') + '</div>' +
-        '<div class="hero-sub">' + esc(sub) + '</div>' +
-        cta + meter + emptyHint +
+    var primary =
+      '<section class="primary">' +
+        '<div class="primary-top"><span class="plabel">' + label + '</span><span class="tag ' + tagCls + '">' + tag + '</span></div>' +
+        '<div class="pvalue"><span class="pcur">¥</span><span class="pint">' + hp.int + '</span><span class="pdec">.' + hp.cents + '</span></div>' +
+        '<div class="pmeta">' + esc(meta) + '</div>' +
+        cta + grid +
       '</section>';
 
-    var forecastVal =
-      '<div class="forecast-value"><span class="c">¥</span><span class="v">' + money(s.forecast) + '</span><span class="u">月底</span></div>' +
-      '<div class="forecast-range">波动区间 ¥' + money(s.forecastLow) + ' – ¥' + money(s.forecastHigh) + '</div>';
-
-    var verdict;
-    if (!has) {
-      verdict = '<div class="forecast-verdict is-tight">设置月限额后，这里会告诉你会不会超支</div>';
-    } else if (s.status === 'over') {
-      verdict = '<div class="forecast-verdict is-over">按当前速度，月底会比限额多花 ¥' + money(s.forecastGap) + '</div>';
-    } else if (s.status === 'tight') {
-      verdict = '<div class="forecast-verdict is-tight">按当前速度，月底差不多刚好用完</div>';
-    } else {
-      verdict = '<div class="forecast-verdict is-safe">按当前速度，月底还能剩 ¥' + money(-s.forecastGap) + '</div>';
-    }
-
-    var chart = s.hasData
-      ? '<div class="chart">' + chartSVG(s) + '</div>' +
-        '<div class="chart-legend"><span><i class="lg lg-solid"></i>已花</span>' +
-        '<span><i class="lg lg-dash"></i>预测</span>' +
-        (has ? '<span><i class="lg lg-dot"></i>限额</span>' : '') + '</div>'
+    var noticeHtml = notice
+      ? '<div class="notice ' + (s.todayLeft < 0 ? 'is-bad' : (s.todayLeft === 0 ? 'is-mute' : 'is-ok')) + '">' + esc(notice) + '</div>'
       : '';
 
-    var forecastCard = !s.hasData ? '' :
-      '<section class="card" style="margin-top:14px">' +
-        '<div class="forecast-head"><span class="forecast-title">本月预测</span>' +
-        '<span class="forecast-note">近 ' + s.observedDays + ' 天日均 ¥' + money(s.dailyMean) + '</span></div>' +
-        forecastVal + verdict + chart +
-      '</section>';
+    // ---------- 本月预算 ----------
+    var carryNote = (has && s.carryIn < 0)
+      ? '<div class="carry-note">上月超支结转 −¥' + money(-s.carryIn) + '　限额 ¥' + money(s.limit) + ' → 可用 ¥' + money(s.budget) + '</div>'
+      : '';
 
+    var budgetCard = has ? (
+      '<section class="card">' +
+        '<div class="chead"><span>本月预算</span><span class="mu">剩 ' + s.daysLeft + ' 天 · 已用 ' + Math.round(s.progress * 100) + '%</span></div>' +
+        '<div class="bar"><i class="' + (s.progress >= 1 ? 'is-over' : '') + '" style="width:' + (s.progress * 100).toFixed(1) + '%"></i></div>' +
+        '<div class="bar-legend"><span>已花 ¥' + money(s.spent) + '</span><span>可用 ¥' + money(s.budget) + '</span></div>' +
+        carryNote +
+        '<div class="kpis">' +
+          '<div class="kpi"><span>剩余额度</span><b class="' + (s.remaining < 0 ? 'is-bad' : '') + '">¥' + money(s.remaining) + '</b></div>' +
+          '<div class="kpi"><span>' + (s.hasData ? '近 ' + s.observedDays + ' 天日均' : '日均') + '</span><b>' + (s.hasData ? '¥' + money(s.dailyMean) : '—') + '</b></div>' +
+          '<div class="kpi"><span>月底预测</span><b class="' + (s.status === 'over' ? 'is-bad' : (s.status === 'tight' ? 'is-warn' : '')) + '">' + (s.hasData ? '¥' + money(s.forecast) : '—') + '</b></div>' +
+        '</div>' +
+      '</section>'
+    ) : '';
+
+    var forecastCard = (has && s.hasData) ? (
+      '<section class="card">' +
+        '<div class="chead"><span>累计与预测</span>' +
+          '<span class="mu">' + (s.status === 'over' ? '预计超支 ¥' + money(s.forecastGap)
+            : s.status === 'tight' ? '预计刚好用完'
+            : '预计结余 ¥' + money(-s.forecastGap)) + '</span></div>' +
+        '<div class="chart">' + chartSVG(s) + '</div>' +
+        '<div class="legend">' +
+          '<span><i class="lg lg-line"></i>已花</span>' +
+          '<span><i class="lg lg-dash"></i>预测</span>' +
+          '<span><i class="lg lg-dot"></i>限额</span>' +
+          '<span style="margin-left:auto">区间 ¥' + money(s.forecastLow) + ' – ¥' + money(s.forecastHigh) + '</span>' +
+        '</div>' +
+      '</section>'
+    ) : '';
+
+    // ---------- 分类 ----------
+    var cats = s.categories.slice(0, 4);
+    var catCard = cats.length ? (
+      '<section class="card">' +
+        '<div class="chead"><span>分类</span><span class="mu">本月</span></div>' +
+        cats.map(function (c) {
+          var meta2 = S.catOf(c.id);
+          return '<div class="cat-row">' +
+            '<span class="cat-row-name">' + esc(meta2.name) + '</span>' +
+            '<div class="cat-track"><i data-c="' + c.id + '" style="width:' + Math.max(2, c.share * 100).toFixed(1) + '%"></i></div>' +
+            '<span class="cat-row-amt">' + Math.round(c.share * 100) + '%</span>' +
+            '<span class="cat-row-val">¥' + money(c.amount) + '</span>' +
+          '</div>';
+        }).join('') +
+      '</section>'
+    ) : '';
+
+    // ---------- 最近记录 ----------
     var recent = state.txns.filter(function (t) { return t.date.slice(0, 7) === s.monthKey; })
       .sort(function (a, b) { return a.date === b.date ? (b.ts - a.ts) : (a.date < b.date ? 1 : -1); })
       .slice(0, 6);
 
-    var recentHtml = recent.length
-      ? '<div class="section-title" style="margin-top:20px"><span>最近记录</span>' +
-          '<button class="link" type="button" data-action="go-list">全部 ›</button></div>' +
-        '<section class="card" style="padding:2px 16px 4px">' +
-          recent.map(function (t) { return txnRow(t, false); }).join('') +
-        '</section>'
+    var recentCard = recent.length
+      ? '<div class="shead"><span>最近记录</span><button class="link" type="button" data-action="go-list">全部</button></div>' +
+        '<section class="card card--list">' + recent.map(function (t) { return txnRow(t, false); }).join('') + '</section>'
       : '';
 
-    var onboardHtml = s.hasData ? '' :
-      '<section class="card" style="margin-top:14px;padding:18px 20px 16px">' +
-        '<div class="onboard">' +
-          '<div class="onboard-title">三步用起来</div>' +
-          '<ol>' +
-            '<li>在「设置」里填这个月打算花多少</li>' +
-            '<li>每花一笔，点中间的 <b>+</b> 记下来</li>' +
-            '<li>概览会算出今天还能花多少、月底大概花多少</li>' +
-          '</ol>' +
-        '</div>' +
+    // ---------- 首次引导 ----------
+    var onboard = s.hasData ? '' :
+      '<section class="card">' +
+        '<div class="chead"><span>三步用起来</span></div>' +
+        '<ol class="steps">' +
+          '<li>在「设置」里填这个月打算花多少</li>' +
+          '<li>每花一笔，点中间的 <b>+</b> 记下来</li>' +
+          '<li>首页会算出今天还能花多少、月底大概花多少</li>' +
+        '</ol>' +
       '</section>';
 
-    return hero + forecastCard + onboardHtml + recentHtml;
+    return primary + noticeHtml + budgetCard + onboard + forecastCard + catCard + recentCard;
   }
 
   /* ---------------- 视图：明细 ---------------- */
@@ -420,7 +452,7 @@
         '<button class="mn-btn" type="button" data-action="prev-month" aria-label="上个月">' +
           '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M14.5 5.5 8 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
         '</button>' +
-        '<div><div class="mn-label">' + ym.year + '年' + ym.month + '月</div>' +
+        '<div class="mn-mid"><div class="mn-label">' + ym.year + '年' + ym.month + '月</div>' +
           '<div class="mn-sum">' + groups.length + ' 天 · 合计 ¥' + money(total) + '</div></div>' +
         '<button class="mn-btn" type="button" data-action="next-month"' + (isCurrent ? ' disabled' : '') + ' aria-label="下个月">' +
           '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M9.5 5.5 16 12l-6.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
@@ -428,16 +460,14 @@
       '</div>';
 
     if (!groups.length) {
-      return nav +
-        '<section class="card"><div class="empty"><b>这个月还没有记录</b>点右下角的 + 记第一笔</div></section>';
+      return nav + '<section class="card"><div class="empty">这个月还没有记录<br>点底部中间的 + 记一笔</div></section>';
     }
 
     var body = groups.map(function (g) {
-      var daySum = '<span>' + dayLabel(g.date) + '</span><span>¥' + money(g.total) + '</span>';
-      return '<div class="day-group"><div class="day-head">' + daySum + '</div>' +
-        '<div class="card" style="padding:2px 16px 4px">' +
-        g.items.map(function (t) { return txnRow(t, true); }).join('') +
-        '</div></div>';
+      return '<div class="day-group">' +
+        '<div class="day-head"><span>' + dayLabel(g.date) + '</span><span>¥' + money(g.total) + '</span></div>' +
+        '<section class="card card--list">' + g.items.map(function (t) { return txnRow(t, true); }).join('') + '</section>' +
+      '</div>';
     }).join('');
 
     return nav + body;
@@ -450,12 +480,12 @@
 
     var seg =
       '<div class="seg">' +
-        '<button type="button" class="' + (Number(w) === 7 ? 'is-on' : '') + '" data-window="7">7天</button>' +
-        '<button type="button" class="' + (Number(w) === 14 ? 'is-on' : '') + '" data-window="14">14天</button>' +
+        '<button type="button" class="' + (Number(w) === 7 ? 'is-on' : '') + '" data-window="7">7 天</button>' +
+        '<button type="button" class="' + (Number(w) === 14 ? 'is-on' : '') + '" data-window="14">14 天</button>' +
         '<button type="button" class="' + (w === 'month' ? 'is-on' : '') + '" data-window="month">整月</button>' +
       '</div>';
 
-    return '<section class="card setting-block" style="margin-top:6px">' +
+    return '<section class="card setting-block">' +
         '<div class="field">' +
           '<div><div class="field-label">月限额</div><div class="field-hint">每个月打算花多少</div></div>' +
           '<div class="field-side"><span class="money-field">' +
@@ -463,13 +493,18 @@
             '<input class="money-input" id="limitInput" type="text" inputmode="decimal" autocomplete="off" value="' + state.limit + '"></span></div>' +
         '</div>' +
         '<div class="field">' +
-          '<div><div class="field-label">预测依据</div><div class="field-hint">取最近多少天的日均</div></div>' +
+          '<div><div class="field-label">预测窗口</div><div class="field-hint">按最近多少天的日均推算</div></div>' +
           '<div class="field-side">' + seg + '</div>' +
+        '</div>' +
+        '<div class="field">' +
+          '<div><div class="field-label">超支结转</div><div class="field-hint">上月还欠着的钱，扣到本月</div></div>' +
+          '<div class="field-side"><button class="switch' + (state.carryOver !== false ? ' is-on' : '') +
+            '" type="button" data-action="toggle-carry" role="switch" aria-checked="' + (state.carryOver !== false) + '"><i></i></button></div>' +
         '</div>' +
       '</section>' +
 
-      '<div class="section-title" style="margin-top:22px">数据</div>' +
-      '<section class="card" style="padding:2px 16px 4px">' +
+      '<div class="shead"><span>数据</span></div>' +
+      '<section class="card card--list">' +
         '<button class="action-row" type="button" data-action="export">' +
           '<span class="ar-label">导出备份<span class="ar-sub">存成 JSON 文件，可再次导入</span></span>' +
           '<span class="ar-go">›</span></button>' +
@@ -483,15 +518,18 @@
           '<span class="ar-label">清空所有数据</span><span class="ar-go">›</span></button>' +
       '</section>' +
 
-      '<div class="section-title" style="margin-top:22px">说明</div>' +
+      '<div class="shead"><span>口径与说明</span></div>' +
       '<section class="card">' +
         '<div class="note-text">' +
-          '<p style="margin:0 0 10px"><strong>数据只存在这台手机上。</strong>没有账号、没有服务器，也就没人能读到你的账。' +
-          '代价是清除网站数据或卸载后会一起消失，所以隔段时间点一次「导出备份」。</p>' +
-          '<p style="margin:0 0 10px"><strong>预测怎么算的。</strong>取最近 N 天（默认 14 天）的日均花销，对剩余天数做外推；' +
-          '数据少时会往「限额日均」靠一点，避免月初一笔大额把预测带飞。</p>' +
-          '<p style="margin:0"><strong>每日建议怎么算的。</strong>（月限额 − 已花）÷ 剩余天数（含今天）。</p>' +
-          '<p style="margin:12px 0 0;color:#B4BAC5;font-size:12px">月衡 v1.0 · 离线可用</p>' +
+          '<p><b>平均每日</b>：月限额 ÷ 当月天数。只是一个平摊参考，不是你要花的数。</p>' +
+          '<p><b>今日额度</b>：(月限额 − 今天之前的支出) ÷ 剩余天数。它在你花今天第一笔钱之前就定下了，不会因为今天花多了而缩水。</p>' +
+          '<p><b>今天还能花</b>：今日额度 − 今天已花。负数就是超支。</p>' +
+          '<p><b>明日额度</b>：(月限额 − 累计已花) ÷ 今天之后的天数。今天省下的钱会摊到后面几天，额度上调；今天超支则会挤占后面的额度，下调。</p>' +
+          '<p><b>日均</b>：取最近 N 天（默认 14 天）的平均支出。记录不足几天时会向「平均每日」靠一点，避免一笔大额把预测带飞。</p>' +
+          '<p><b>月底预测</b>：已花 + 日均 × 剩余天数，用来判断按现在的速度会不会超支。</p>' +
+          '<p><b>超支结转</b>：月底还欠着的部分会扣到下个月的可用额度里（只结转欠款，结余不累积）。历史月份按当前设置的限额估算。</p>' +
+          '<p class="dim">数据只存在这台手机上，没有账号也没有服务器。清除网站数据或卸载会一起消失，建议每月导出一次备份。</p>' +
+          '<p class="dim">月衡 v1.1</p>' +
         '</div>' +
       '</section>';
   }
@@ -506,7 +544,10 @@
   }
 
   function render() {
-    var s = F.summarize({ txns: state.txns, limit: state.limit, windowDays: state.windowDays });
+    var s = F.summarize({
+      txns: state.txns, limit: state.limit, windowDays: state.windowDays,
+      carryOver: state.carryOver !== false
+    });
     el.topMonth.textContent = s.monthLabel;
 
     var html;
@@ -515,7 +556,7 @@
     else html = viewSettings();
 
     var banner = DEMO
-      ? '<div class="demo-banner">演示数据 · 改动不会保存 · <a href="./" style="color:inherit">去正式使用</a></div>'
+      ? '<div class="demo-banner">演示数据 · 改动不会保存 · <a href="./">去正式使用</a></div>'
       : '';
 
     el.view.innerHTML = banner + html;
@@ -584,7 +625,7 @@
     }
   });
 
-  function handleAction(name, node, e) {
+  function handleAction(name, node) {
     switch (name) {
       case 'open-sheet': openSheet(); break;
       case 'close-sheet': closeSheet(); break;
@@ -594,6 +635,12 @@
       case 'next-month': if (listOffset > 0) { listOffset -= 1; render(); } break;
       case 'go-list': setView('list'); break;
       case 'go-settings': setView('settings'); break;
+      case 'toggle-carry':
+        state.carryOver = (state.carryOver === false);
+        persist();
+        render();
+        toast(state.carryOver ? '已开启超支结转' : '已关闭超支结转');
+        break;
       case 'export': doExport(); break;
       case 'copy': doCopy(); break;
       case 'import': doImport(); break;
